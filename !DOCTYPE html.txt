@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Veer Indian Truck Game</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0e0e0f;
+      --panel: rgba(0,0,0,0.65);
+      --accent: #ff7a00;
+      --accent-2: #ffd166;
+      --text: #f7f7f7;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0; overflow: hidden; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", sans-serif;
+    }
+    h1 {
+      position: absolute; top: 10px; left: 0; right: 0;
+      margin: 0; text-align: center; font-size: 22px; letter-spacing: 0.3px; z-index: 10;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    }
+    #gameCanvas { display:block; width:100vw; height:100vh; }
+
+    /* Control panel */
+    .panel {
+      position: absolute; z-index: 20; background: var(--panel); backdrop-filter: blur(4px);
+      border-radius: 12px; padding: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    #uiPanel { top: 64px; left: 12px; width: 190px; }
+    #settingsPanel { top: 64px; right: 12px; width: 210px; }
+    .panel h3 { margin: 4px 0 8px; font-size: 14px; opacity: 0.9; }
+    .panel button, .panel select, .panel input[type="range"] {
+      width: 100%; margin: 6px 0; padding: 8px; border: 0; border-radius: 8px;
+      font-weight: 600; cursor: pointer; color: #111;
+    }
+    .panel button { background: var(--accent); color: #111; }
+    .panel button:hover { background: var(--accent-2); }
+    .panel label { font-size: 12px; opacity: 0.9; display:block; margin: 8px 0 2px; }
+    .muted { opacity: 0.7; font-size: 12px; }
+
+    /* Event log */
+    #eventLog {
+      position: absolute; left: 12px; bottom: 16px; width: 280px; max-height: 30vh; overflow-y: auto;
+      background: var(--panel); padding: 10px; border-radius: 12px; z-index: 25;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    .logEntry { margin: 4px 0; line-height: 1.25; font-size: 13px; opacity: 0.95;
+      animation: fadeOut 8s forwards; }
+    @keyframes fadeOut { 0%,85% {opacity:1} 100% {opacity:0} }
+
+    /* Mobile on-screen controls */
+    #touchControls {
+      position: absolute; right: 12px; bottom: 16px; z-index: 30; display: grid; gap: 8px;
+      grid-template-columns: repeat(3, 56px);
+    }
+    .tc-btn {
+      width: 56px; height: 56px; border-radius: 50%;
+      background: var(--panel); color: var(--text); border: 1px solid rgba(255,255,255,0.1);
+      display:flex; align-items:center; justify-content:center; font-size: 20px;
+      user-select: none;
+    }
+    .tc-btn:active { background: rgba(255,255,255,0.08); }
+    @media (min-width: 900px) { #touchControls { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>🚛 Veer Indian Truck Game 🇮🇳</h1>
+
+  <!-- Left: Quick event triggers -->
+  <div id="uiPanel" class="panel">
+    <h3>Roadside Events</h3>
+    <button id="btnPolice">🚔 Police</button>
+    <button id="btnToll">💰 Toll</button>
+    <button id="btnFestival">🎉 Festival</button>
+    <button id="btnBreakdown">🔧 Breakdown</button>
+    <div class="muted">Events have a cooldown to avoid spam.</div>
+  </div>
+
+  <!-- Right: Settings -->
+  <div id="settingsPanel" class="panel">
+    <h3>Settings</h3>
+
+    <label for="langSelect">Language (भाषा)</label>
+    <select id="langSelect">
+      <option value="en">English</option>
+      <option value="hi">हिंदी</option>
+    </select>
+
+    <label for="hornMode">Horn Type</label>
+    <select id="hornMode">
+      <option value="normal">Normal (Hold H)</option>
+      <option value="bollywood">Bollywood Melody</option>
+    </select>
+
+    <label for="eventCooldown">Event Cooldown (sec)</label>
+    <input type="range" id="eventCooldown" min="30" max="240" step="10" value="120" />
+    <div class="muted"><span id="cooldownLabel">120</span> seconds</div>
+
+    <label for="trafficChance">Random Event Chance</label>
+    <input type="range" id="trafficChance" min="0" max="100" step="5" value="10" />
+    <div class="muted"><span id="chanceLabel">10</span>% every 10s</div>
+  </div>
+
+  <!-- Event log -->
+  <div id="eventLog"></div>
+
+  <!-- Optional on-screen controls for mobile -->
+  <div id="touchControls">
+    <div class="tc-btn" data-key="ArrowUp">▲</div>
+    <div class="tc-btn" data-key="KeyH">📣</div>
+    <div class="tc-btn" data-key="ArrowLeft">◀</div>
+    <div class="tc-btn" data-key="ArrowDown">▼</div>
+    <div class="tc-btn" data-key="ArrowRight">▶</div>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Three.js -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+
+  <script>
+  // ---------------------- 3D SCENE ----------------------
+  const canvas = document.getElementById("gameCanvas");
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x202328);
+
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1200);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+
+  // Lights
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x404040, 0.6);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+  dir.position.set(6, 12, 8);
+  dir.castShadow = true;
+  scene.add(dir);
+
+  // Ground (asphalt strip) + shoulders
+  const roadW = 50, roadL = 600;
+  const matRoad = new THREE.MeshPhongMaterial({ color: 0x323232 });
+  const matShoulder = new THREE.MeshPhongMaterial({ color: 0x2c2c2c });
+
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(roadW, roadL), matRoad);
+  road.rotation.x = -Math.PI / 2;
+  road.receiveShadow = true;
+  scene.add(road);
+
+  const shoulderL = new THREE.Mesh(new THREE.PlaneGeometry(20, roadL), matShoulder);
+  shoulderL.rotation.x = -Math.PI / 2;
+  shoulderL.position.x = -roadW/2 - 10;
+  shoulderL.receiveShadow = true;
+  scene.add(shoulderL);
+
+  const shoulderR = shoulderL.clone();
+  shoulderR.position.x = roadW/2 + 10;
+  scene.add(shoulderR);
+
+  // Simple center lane markings
+  const laneGroup = new THREE.Group();
+  const laneMat = new THREE.MeshBasicMaterial({ color: 0xf1f1f1 });
+  for (let z = -roadL/2 + 10; z < roadL/2; z += 20) {
+    const dash = new THREE.Mesh(new THREE.PlaneGeometry(1, 6), laneMat);
+    dash.rotation.x = -Math.PI/2;
+    dash.position.set(0, 0.01, z);
+    laneGroup.add(dash);
+  }
+  scene.add(laneGroup);
+
+  // Truck (placeholder: cab + box)
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.4, 1.6), new THREE.MeshPhongMaterial({ color: 0xff7a00 }));
+  const box = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.2, 3.2), new THREE.MeshPhongMaterial({ color: 0xffa74d }));
+  const truck = new THREE.Group();
+  cab.position.set(0, 1.1, 1.9);
+  box.position.set(0, 1.0, -0.8);
+  truck.add(cab, box);
+  truck.castShadow = true;
+  scene.add(truck);
+  truck.position.set(0, 0, 200);
+
+  // Camera follow offsets
+  function updateCamera() {
+    const yaw = truck.rotation.y;
+    camera.position.x = truck.position.x + Math.sin(yaw) * 12;
+    camera.position.z = truck.position.z + Math.cos(yaw) * 12;
+    camera.position.y = 6;
+    camera.lookAt(truck.position.x, truck.position.y + 1.5, truck.position.z);
+  }
+  camera.position.set(0, 6, truck.position.z + 12);
+  updateCamera();
+
+  // ---------------------- MOVEMENT ----------------------
+  const keys = Object.create(null);
+  window.addEventListener("keydown", e => keys[e.code] = true);
+  window.addEventListener("keyup",   e => keys[e.code] = false);
+
+  // Touch controls -> synthesize key presses
+  const tc = document.getElementById("touchControls");
+  const pressedTouch = {};
+  tc.querySelectorAll(".tc-btn").forEach(btn => {
+    const code = btn.getAttribute("data-key");
+    const down = () => { keys[code] = true; pressedTouch[code] = true; };
+    const up   = () => { keys[code] = false; pressedTouch[code] = false; };
+    btn.addEventListener("touchstart", e => { e.preventDefault(); down(); });
+    btn.addEventListener("touchend",   e => { e.preventDefault(); up(); });
+    btn.addEventListener("mousedown", down);
+    btn.addEventListener("mouseup", up);
+    btn.addEventListener("mouseleave", up);
+  });
+
+  let speed = 0;
+  const maxSpeed = 0.26;
+  const accel = 0.0065;
+  const brakeAccel = 0.0075;
+  const drag = 0.0024;
+  const turnRate = 0.035;
+
+  function handleMovement(dt=1/60) {
+    // throttle / brake
+    if (keys["ArrowUp"] || keys["KeyW"]) {
+      speed = Math.min(maxSpeed, speed + accel);
+    } else if (keys["ArrowDown"] || keys["KeyS"]) {
+      speed = Math.max(-maxSpeed*0.4, speed - brakeAccel);
+    } else {
+      // drag
+      if (speed > 0) speed = Math.max(0, speed - drag);
+      else if (speed < 0) speed = Math.min(0, speed + drag);
+    }
+
+    // steering (only while moving to feel weight)
+    if (Math.abs(speed) > 0.001) {
+      if (keys["ArrowLeft"] || keys["KeyA"])  truck.rotation.y += turnRate * (speed>0 ? 1 : -1);
+      if (keys["ArrowRight"] || keys["KeyD"]) truck.rotation.y -= turnRate * (speed>0 ? 1 : -1);
+    }
+
+    // advance
+    truck.position.x -= Math.sin(truck.rotation.y) * speed / dt * (dt);
+    truck.position.z -= Math.cos(truck.rotation.y) * speed / dt * (dt);
+
+    // loop road to feel infinite
+    if (truck.position.z < -roadL/2)  truck.position.z = roadL/2;
+    if (truck.position.z >  roadL/2)  truck.position.z = -roadL/2;
+
+    updateCamera();
+  }
+
+  // ---------------------- UI / LOG ----------------------
+  const logBox = document.getElementById("eventLog");
+  function log(msg) {
+    const d = document.createElement("div");
+    d.className = "logEntry";
+    d.textContent = msg;
+    logBox.appendChild(d);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  // ---------------------- VOICE NAV MESSAGES ----------------------
+  const langSelect = document.getElementById("langSelect");
+  let lang = langSelect.value; // "en" or "hi"
+  langSelect.addEventListener("change", () => { lang = langSelect.value; log(lang==="hi"?"भाषा बदली गई: हिंदी":"Language set: English"); });
+
+  function msg(key) {
+    const dict = {
+      police: { en: "Police checkpoint ahead!", hi: "आगे पुलिस चौकी है!" },
+      toll: { en: "Toll booth coming up.", hi: "आगे टोल बूथ है।" },
+      festival: { en: "Festival procession on the road!", hi: "सड़क पर जुलूस है!" },
+      breakdown: { en: "Broken-down truck ahead.", hi: "आगे खराब ट्रक खड़ा है।" },
+      hornOn: { en: "Horn!", hi: "हॉर्न!" },
+      triple: { en: "Triple horn!", hi: "ट्रिपल हॉर्न!" },
+      melody: { en: "Bollywood horn melody ♪", hi: "बॉलीवुड हॉर्न धुन ♪" }
+    };
+    return dict[key]?.[lang] ?? key;
+  }
+
+  // ---------------------- HORN SYSTEM ----------------------
+  let hornCtx, hornOsc1, hornOsc2, hornGain, lfo, lfoGain;
+  let lastTap = 0;
+  let hornMode = document.getElementById("hornMode").value; // "normal" or "bollywood"
+  document.getElementById("hornMode").addEventListener("change", e => {
+    hornMode = e.target.value;
+    log(hornMode === "bollywood" ? "Horn: Bollywood melody" : "Horn: Normal");
+  });
+
+  function ensureCtx() {
+    if (!hornCtx) hornCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  function startContinuousHorn() {
+    if (hornMode === "bollywood") { playBollywoodHorn(); return; }
+    if (hornOsc1) return; // already sounding
+    ensureCtx();
+
+    hornGain = hornCtx.createGain();
+    hornGain.gain.setValueAtTime(0.28, hornCtx.currentTime);
+
+    hornOsc1 = hornCtx.createOscillator(); // low
+    hornOsc1.type = "square"; hornOsc1.frequency.value = 150;
+    hornOsc1.connect(hornGain);
+
+    hornOsc2 = hornCtx.createOscillator(); // high
+    hornOsc2.type = "sawtooth"; hornOsc2.frequency.value = 400;
+    hornOsc2.connect(hornGain);
+
+    lfo = hornCtx.createOscillator();
+    lfoGain = hornCtx.createGain();
+    lfo.frequency.value = 4; lfoGain.gain.value = 0.14;
+    lfo.connect(lfoGain); lfoGain.connect(hornGain.gain);
+
+    hornGain.connect(hornCtx.destination);
+    hornOsc1.start(); hornOsc2.start(); lfo.start();
+    log(msg("hornOn"));
+  }
+
+  function stopContinuousHorn() {
+    if (!hornOsc1) return;
+    try { hornOsc1.stop(); hornOsc2.stop(); lfo.stop(); } catch {}
+    hornOsc1.disconnect(); hornOsc2.disconnect(); hornGain.disconnect(); lfo.disconnect(); lfoGain.disconnect();
+    hornOsc1 = hornOsc2 = hornGain = lfo = lfoGain = null;
+  }
+
+  function playTripleHorn() {
+    if (hornMode === "bollywood") { playBollywoodHorn(); return; }
+    log(msg("triple"));
+    const step = (dur, freq1, freq2, when) => {
+      ensureCtx();
+      const g = hornCtx.createGain(); g.gain.setValueAtTime(0.28, when);
+      const o1 = hornCtx.createOscillator(); o1.type="square"; o1.frequency.setValueAtTime(freq1, when);
+      const o2 = hornCtx.createOscillator(); o2.type="sawtooth"; o2.frequency.setValueAtTime(freq2, when);
+      o1.connect(g); o2.connect(g); g.connect(hornCtx.destination);
+      o1.start(when); o2.start(when);
+      g.gain.exponentialRampToValueAtTime(0.0007, when + dur - 0.02);
+      o1.stop(when + dur); o2.stop(when + dur);
+    };
+    const t = (hornCtx?.currentTime ?? 0) + 0.01;
+    step(0.22, 160, 420, t + 0.00); // pee
+    step(0.22, 130, 360, t + 0.28); // poo
+    step(0.36, 170, 460, t + 0.56); // pii
+  }
+
+  function playBollywoodHorn() {
+    ensureCtx();
+    log(msg("melody"));
+    // A simple 8-note cheerful riff (frequencies in Hz)
+    const notes = [294, 330, 392, 440, 392, 330, 294, 220];
+    const t0 = hornCtx.currentTime + 0.02;
+    notes.forEach((f, i) => {
+      const osc = hornCtx.createOscillator();
+      const g = hornCtx.createGain();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(f, t0 + i*0.18);
+      g.gain.setValueAtTime(0.22, t0 + i*0.18);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + i*0.18 + 0.17);
+      osc.connect(g); g.connect(hornCtx.destination);
+      osc.start(t0 + i*0.18); osc.stop(t0 + i*0.18 + 0.18);
+    });
+  }
+
+  // Keyboard for horn
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "KeyH") {
+      const now = Date.now();
+      if (now - lastTap < 300) playTripleHorn();
+      else startContinuousHorn();
+      lastTap = now;
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "KeyH" && hornMode === "normal") stopContinuousHorn();
+  });
+
+  // Touch horn button
+  tc.querySelector('[data-key="KeyH"]').addEventListener("touchstart", e => { e.preventDefault(); startContinuousHorn(); });
+  tc.querySelector('[data-key="KeyH"]').addEventListener("touchend",   e => { e.preventDefault(); if (hornMode==="normal") stopContinuousHorn(); });
+
+  // ---------------------- EVENTS & COOLDOWN ----------------------
+  let lastEventTime = 0;
+  const cooldownInput = document.getElementById("eventCooldown");
+  const cooldownLabel = document.getElementById("cooldownLabel");
+  const chanceInput = document.getElementById("trafficChance");
+  const chanceLabel = document.getElementById("chanceLabel");
+  let eventCooldownMs = (+cooldownInput.value) * 1000;
+  cooldownInput.addEventListener("input", () => {
+    cooldownLabel.textContent = cooldownInput.value;
+    eventCooldownMs = (+cooldownInput.value) * 1000;
+  });
+  chanceInput.addEventListener("input", () => {
+    chanceLabel.textContent = chanceInput.value;
+  });
+
+  function triggerEvent(name) {
+    const now = Date.now();
+    if (now - lastEventTime < eventCooldownMs) return; // cooldown
+    lastEventTime = now;
+    const icon = { police:"🚔", toll:"💰", festival:"🎉", breakdown:"🔧" }[name] || "ℹ️";
+    const txt = msg(name);
+    log(`${icon} ${txt}`);
+  }
+
+  document.getElementById("btnPolice").onclick   = () => triggerEvent("police");
+  document.getElementById("btnToll").onclick     = () => triggerEvent("toll");
+  document.getElementById("btnFestival").onclick = () => triggerEvent("festival");
+  document.getElementById("btnBreakdown").onclick= () => triggerEvent("breakdown");
+
+  // Random events (check every 10s with adjustable chance)
+  setInterval(() => {
+    const chance = (+chanceInput.value) / 100; // 0–1
+    if (Math.random() < chance) {
+      const events = ["police","toll","festival","breakdown"];
+      triggerEvent(events[Math.floor(Math.random()*events.length)]);
+    }
+  }, 10000);
+
+  // ---------------------- GAME LOOP ----------------------
+  function animate() {
+    requestAnimationFrame(animate);
+    handleMovement(1/60);
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // Resize
+  window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+  </script>
+</body>
+</html>
